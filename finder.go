@@ -170,7 +170,7 @@ func NewFinder() *Finder {
 		selectedIndex:            -1,
 		highlightFullLine:        false,
 		selectedFocusOnly:        true,
-		wrapAround:               false,
+		wrapAround:               true,
 	}
 
 	return search
@@ -683,14 +683,14 @@ func (f *Finder) handleInputList(event *tcell.EventKey) {
 		newSelectedIndex++
 	}
 
-	if f.selectedIndex < 0 {
+	if newSelectedIndex < 0 {
 		if f.wrapAround {
 			newSelectedIndex = len(f.matched) - 1
 		} else {
 			newSelectedIndex = 0
 			f.itemOffset = 0
 		}
-	} else if f.selectedIndex >= len(f.matched) {
+	} else if newSelectedIndex >= len(f.matched) {
 		if f.wrapAround {
 			newSelectedIndex = 0
 			f.itemOffset = 0
