@@ -170,7 +170,7 @@ func NewFinder() *Finder {
 		selectedIndex:            -1,
 		highlightFullLine:        false,
 		selectedFocusOnly:        true,
-		wrapAround:               true,
+		wrapAround:               false,
 	}
 
 	return search
@@ -529,6 +529,7 @@ func (f *Finder) Draw(screen tcell.Screen) {
 
 		// print title && don't increase currentX any further since we still need to draw the background
 		itemTitle := truncate(item, maxTitleWidth)
+		itemTitleLen := TaggedStringWidth(itemTitle)
 		printWithStyle(
 			screen,
 			itemTitle,
@@ -543,7 +544,7 @@ func (f *Finder) Draw(screen tcell.Screen) {
 				textWidth = tw
 			}
 		}
-		for bx := currentX; bx < minInt(currentX+len(itemTitle), maxX); bx++ {
+		for bx := currentX; bx < minInt(currentX+itemTitleLen, maxX); bx++ {
 			m, c, _, _ := screen.GetContent(bx, currentY)
 			screen.SetContent(bx, currentY, m, c, itemStyle)
 		}
@@ -586,7 +587,7 @@ func (f *Finder) drawInputField(screen tcell.Screen) {
 	x += f.inputLabelPadding
 
 	// Draw input area.
-	fieldWidth := width - len(f.inputLabel) - f.inputLabelPadding
+	fieldWidth := width - TaggedStringWidth(f.inputLabel) - f.inputLabelPadding
 	text := f.filterText
 	inputStyle := f.fieldStyle
 	showPlaceholder := text == ""
