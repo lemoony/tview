@@ -248,7 +248,7 @@ func printWithStyle(screen tcell.Screen, text string, x, y, skipWidth, maxWidth,
 	}
 
 	// Decompose the text.
-	colorIndices, colors, _, _, escapeIndices, strippedText, strippedWidth := decomposeString(text, true, false)
+	colorIndices, colors, _, _, escapeIndices, strippedText, strippedWidth := decomposeString(text, false, false)
 
 	// We want to reduce all alignments to AlignLeft.
 	if align == AlignRight {
@@ -358,6 +358,200 @@ func printWithStyle(screen tcell.Screen, text string, x, y, skipWidth, maxWidth,
 				}
 			}
 			bytes, width, from, to := printWithStyle(screen, text[leftIndex+tagOffset:], x, y, 0, maxWidth, AlignLeft, style, maintainBackground)
+			from += leftIndex + tagOffset
+			to += leftIndex + tagOffset
+			return bytes, width, from, to
+		}
+	}
+
+	// Draw text.
+	var (
+		drawn, drawnWidth, colorPos, escapePos, tagOffset, from, to int
+		foregroundColor, backgroundColor, attributes                string
+	)
+	iterateString(strippedText, func(main rune, comb []rune, textPos, length, screenPos, screenWidth int) bool {
+		// Skip character if necessary.
+		if skipWidth > 0 {
+			skipWidth -= screenWidth
+			from = textPos + length
+			to = from
+			return false
+		}
+
+		// Only continue if there is still space.
+		if drawnWidth+screenWidth > maxWidth || x+drawnWidth >= totalWidth {
+			return true
+		}
+
+		// Handle color tags.
+		for colorPos < len(colorIndices) && textPos+tagOffset >= colorIndices[colorPos][0] && textPos+tagOffset < colorIndices[colorPos][1] {
+			foregroundColor, backgroundColor, attributes = styleFromTag(foregroundColor, backgroundColor, attributes, colors[colorPos])
+			tagOffset += colorIndices[colorPos][1] - colorIndices[colorPos][0]
+			colorPos++
+		}
+
+		// Handle escape tags.
+		if escapePos < len(escapeIndices) && textPos+tagOffset >= escapeIndices[escapePos][0] && textPos+tagOffset < escapeIndices[escapePos][1] {
+			if textPos+tagOffset == escapeIndices[escapePos][1]-2 {
+				tagOffset++
+				escapePos++
+			}
+		}
+
+		// Memorize positions.
+		to = textPos + length
+
+		// Print the rune sequence.
+		finalX := x + drawnWidth
+		finalStyle := style
+		if maintainBackground {
+			_, _, existingStyle, _ := screen.GetContent(finalX, y)
+			_, background, _ := existingStyle.Decompose()
+			finalStyle = finalStyle.Background(background)
+		}
+		finalStyle = overlayStyle(finalStyle, foregroundColor, backgroundColor, attributes)
+		for offset := screenWidth - 1; offset >= 0; offset-- {
+			// To avoid undesired effects, we populate all cells.
+			if offset == 0 {
+				screen.SetContent(finalX+offset, y, main, comb, finalStyle)
+			} else {
+				screen.SetContent(finalX+offset, y, ' ', nil, finalStyle)
+			}
+		}
+
+		// Advance.
+		drawn += length
+		drawnWidth += screenWidth
+
+		return false
+	})
+
+	return drawn + tagOffset + len(escapeIndices), drawnWidth, from, to
+}
+
+// printWithStyle works like Print() but it takes a style instead of just a
+// foreground color. The skipWidth parameter specifies the number of cells
+// skipped at the beginning of the text. It also returns the start and end index
+// (exclusively) of the text actually printed. If maintainBackground is "true",
+// The existing screen background is not changed (i.e. the style's background
+// color is ignored).
+func printWithStyleStripColors(screen tcell.Screen, text string, x, y, skipWidth, maxWidth, align int, style tcell.Style, stripColors bool, maintainBackground bool) (int, int, int, int) {
+	totalWidth, totalHeight := screen.Size()
+	if maxWidth <= 0 || len(text) == 0 || y < 0 || y >= totalHeight {
+		return 0, 0, 0, 0
+	}
+
+	// Decompose the text.
+	colorIndices, colors, _, _, escapeIndices, strippedText, strippedWidth := decomposeString(text, stripColors, false)
+
+	// We want to reduce all alignments to AlignLeft.
+	if align == AlignRight {
+		if strippedWidth-skipWidth <= maxWidth {
+			// There's enough space for the entire text.
+			return printWithStyleStripColors(screen, text, x+maxWidth-strippedWidth+skipWidth, y, skipWidth, maxWidth, AlignLeft, style, stripColors, maintainBackground)
+		}
+		// Trim characters off the beginning.
+		var (
+			bytes, width, colorPos, escapePos, tagOffset, from, to int
+			foregroundColor, backgroundColor, attributes           string
+		)
+		originalStyle := style
+		iterateString(strippedText, func(main rune, comb []rune, textPos, textWidth, screenPos, screenWidth int) bool {
+			// Update color/escape tag offset and style.
+			if colorPos < len(colorIndices) && textPos+tagOffset >= colorIndices[colorPos][0] && textPos+tagOffset < colorIndices[colorPos][1] {
+				foregroundColor, backgroundColor, attributes = styleFromTag(foregroundColor, backgroundColor, attributes, colors[colorPos])
+				style = overlayStyle(originalStyle, foregroundColor, backgroundColor, attributes)
+				tagOffset += colorIndices[colorPos][1] - colorIndices[colorPos][0]
+				colorPos++
+			}
+			if escapePos < len(escapeIndices) && textPos+tagOffset >= escapeIndices[escapePos][0] && textPos+tagOffset < escapeIndices[escapePos][1] {
+				tagOffset++
+				escapePos++
+			}
+			if strippedWidth-screenPos <= maxWidth {
+				// We chopped off enough.
+				if escapePos > 0 && textPos+tagOffset-1 >= escapeIndices[escapePos-1][0] && textPos+tagOffset-1 < escapeIndices[escapePos-1][1] {
+					// Unescape open escape sequences.
+					escapeCharPos := escapeIndices[escapePos-1][1] - 2
+					text = text[:escapeCharPos] + text[escapeCharPos+1:]
+				}
+				// Print and return.
+				bytes, width, from, to = printWithStyleStripColors(screen, text[textPos+tagOffset:], x, y, 0, maxWidth, AlignLeft, style, false, maintainBackground)
+				from += textPos + tagOffset
+				to += textPos + tagOffset
+				return true
+			}
+			return false
+		})
+		return bytes, width, from, to
+	} else if align == AlignCenter {
+		if strippedWidth-skipWidth == maxWidth {
+			// Use the exact space.
+			return printWithStyleStripColors(screen, text, x, y, skipWidth, maxWidth, AlignLeft, style, false, maintainBackground)
+		} else if strippedWidth-skipWidth < maxWidth {
+			// We have more space than we need.
+			half := (maxWidth - strippedWidth + skipWidth) / 2
+			return printWithStyleStripColors(screen, text, x+half, y, skipWidth, maxWidth-half, AlignLeft, style, false, maintainBackground)
+		} else {
+			// Chop off runes until we have a perfect fit.
+			var choppedLeft, choppedRight, leftIndex, rightIndex int
+			rightIndex = len(strippedText)
+			for rightIndex-1 > leftIndex && strippedWidth-skipWidth-choppedLeft-choppedRight > maxWidth {
+				if skipWidth > 0 || choppedLeft < choppedRight {
+					// Iterate on the left by one character.
+					iterateString(strippedText[leftIndex:], func(main rune, comb []rune, textPos, textWidth, screenPos, screenWidth int) bool {
+						if skipWidth > 0 {
+							skipWidth -= screenWidth
+							strippedWidth -= screenWidth
+						} else {
+							choppedLeft += screenWidth
+						}
+						leftIndex += textWidth
+						return true
+					})
+				} else {
+					// Iterate on the right by one character.
+					iterateStringReverse(strippedText[leftIndex:rightIndex], func(main rune, comb []rune, textPos, textWidth, screenPos, screenWidth int) bool {
+						choppedRight += screenWidth
+						rightIndex -= textWidth
+						return true
+					})
+				}
+			}
+
+			// Add tag offsets and determine start style.
+			var (
+				colorPos, escapePos, tagOffset               int
+				foregroundColor, backgroundColor, attributes string
+			)
+			originalStyle := style
+			for index := range strippedText {
+				// We only need the offset of the left index.
+				if index > leftIndex {
+					// We're done.
+					if escapePos > 0 && leftIndex+tagOffset-1 >= escapeIndices[escapePos-1][0] && leftIndex+tagOffset-1 < escapeIndices[escapePos-1][1] {
+						// Unescape open escape sequences.
+						escapeCharPos := escapeIndices[escapePos-1][1] - 2
+						text = text[:escapeCharPos] + text[escapeCharPos+1:]
+					}
+					break
+				}
+
+				// Update color/escape tag offset.
+				if colorPos < len(colorIndices) && index+tagOffset >= colorIndices[colorPos][0] && index+tagOffset < colorIndices[colorPos][1] {
+					if index <= leftIndex {
+						foregroundColor, backgroundColor, attributes = styleFromTag(foregroundColor, backgroundColor, attributes, colors[colorPos])
+						style = overlayStyle(originalStyle, foregroundColor, backgroundColor, attributes)
+					}
+					tagOffset += colorIndices[colorPos][1] - colorIndices[colorPos][0]
+					colorPos++
+				}
+				if escapePos < len(escapeIndices) && index+tagOffset >= escapeIndices[escapePos][0] && index+tagOffset < escapeIndices[escapePos][1] {
+					tagOffset++
+					escapePos++
+				}
+			}
+			bytes, width, from, to := printWithStyleStripColors(screen, text[leftIndex+tagOffset:], x, y, 0, maxWidth, AlignLeft, style, stripColors, maintainBackground)
 			from += leftIndex + tagOffset
 			to += leftIndex + tagOffset
 			return bytes, width, from, to

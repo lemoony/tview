@@ -467,10 +467,10 @@ func (f *Finder) Draw(screen tcell.Screen) {
 	drawnLines += 1
 
 	// Draw the counter
-	printWithStyle(
+	printWithStyleStripColors(
 		screen,
 		fmt.Sprintf("%d/%d", len(f.matched), f.itemCount),
-		f.inputOffset(), currentY, 0, width, AlignLeft, f.counterStyle, true,
+		f.inputOffset(), currentY, 0, width, AlignLeft, f.counterStyle, false, true,
 	)
 	drawnLines += 1
 	currentY--
@@ -528,14 +528,13 @@ func (f *Finder) Draw(screen tcell.Screen) {
 		currentX := x
 
 		// print label
-		printWithStyle(
-			screen, label, x, currentY, 0, width, AlignLeft, labelStyle, false,
+		printWithStyleStripColors(
+			screen, label, x, currentY, 0, width, AlignLeft, labelStyle, false, false,
 		)
 		currentX += len(label)
-
 		if selected {
-			printWithStyle(
-				screen, " ", currentX, currentY, 0, width, AlignLeft, labelStyle, false,
+			printWithStyleStripColors(
+				screen, " ", currentX, currentY, 0, width, AlignLeft, labelStyle, false, false,
 			)
 		}
 
@@ -546,18 +545,18 @@ func (f *Finder) Draw(screen tcell.Screen) {
 
 		// print title && don't increase currentX any further since we still need to draw the background
 		itemTitle := truncate(item, maxTitleWidth)
-		itemTitleLen := TaggedStringWidth(itemTitle)
-		printWithStyle(
+		itemTitleLen := len(itemTitle)
+		printWithStyleStripColors(
 			screen,
 			itemTitle,
 			currentX,
-			currentY, 0, maxTitleWidth, AlignLeft, itemStyle, true,
+			currentY, 0, maxTitleWidth, AlignLeft, itemStyle, false, true,
 		)
 
 		// print background
 		textWidth := width
 		if !f.highlightFullLine {
-			if tw := TaggedStringWidth(item); tw < textWidth {
+			if tw := len(item); tw < textWidth {
 				textWidth = tw
 			}
 		}
@@ -569,7 +568,7 @@ func (f *Finder) Draw(screen tcell.Screen) {
 		// draw match highlighting
 		if f.filterText != "" {
 			for _, m := range matchItem.matches {
-				printWithStyle(
+				printWithStyleStripColors(
 					screen,
 					item[m[0]:m[1]],
 					currentX+m[0],
@@ -577,6 +576,7 @@ func (f *Finder) Draw(screen tcell.Screen) {
 					0,
 					width, AlignLeft,
 					f.highlightMatchStyle,
+					false,
 					f.highlightMatchMaintainBackgroundColor,
 				)
 			}
@@ -604,7 +604,7 @@ func (f *Finder) drawInputField(screen tcell.Screen) {
 	x += f.inputLabelPadding
 
 	// Draw input area.
-	fieldWidth := width - TaggedStringWidth(f.inputLabel) - f.inputLabelPadding
+	fieldWidth := width - len(f.inputLabel) - f.inputLabelPadding
 	text := f.filterText
 	inputStyle := f.fieldStyle
 	showPlaceholder := text == ""
